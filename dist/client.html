@@ -1,0 +1,406 @@
+<html data-bs-theme="dark">
+  <head>
+    <meta charset="UTF-8">
+    <title>Breaking Cues</title>
+    <link href="bootstrap.min.css" rel="stylesheet"></link>
+    <!--<script src="bootstrap.bundle.min.js"></script>-->
+
+    <link href="bootstrap-icons.min.css" rel="stylesheet"></link>
+
+    <script src="client.js"></script>
+  </head>
+  
+  <body style="margin: 0; overflow: hidden;">
+    <canvas id="hiddenCanvas" style="display: none;"></div>
+    <input id="hiddenFileInput" type="file" style="display: none;"></input>
+    <script type="module">
+      const canvas = document.getElementById("hiddenCanvas");
+      const input = document.getElementById("hiddenFileInput");
+      const context = canvas.getContext("2d");
+
+      const lineHeight = (font) => {
+        context.font = font;
+        const metrics = context.measureText("");
+        return metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent;
+      };
+
+      const measureWidth = (font) => (text) => {
+        context.font = font;
+        return context.measureText(text).width;
+      };
+
+      const square = (x) => x * x;
+
+      const splitChunk = (style) => (maxWidth) => (maxLines) => (font) => (lineHeight) => (lines) => {
+
+        // At every possible breakpoint consider the accumulated badness if this is a linebreak or a pagebreak.
+        // Note that vertical badness is not considered for the partially completed page at a linebreak.
+        lines = lines.map((line) => {
+          line = line
+            .split(/(?<! )(?= )|(?<= )(?! )/u)
+            .map
+              ((word) =>
+                ( { "word": word
+                  , "glue": word.match(/^ *$/u) != null
+                  }
+                )
+              )
+            ;
+          line.glues = line.filter((word) => word.glue).length;
+          return line;
+        });
+        const breakpoints = lines.map((line) => line.glues + 1).reduce((x, y) => x + y, 0) + 1;
+        const dp = Array(breakpoints)
+        dp[0] =
+          { linebreak: Array.from
+            ( { length: maxLines }
+            , (x, i) =>
+              ( { badness: 0
+                , lastLinebreak: 0
+                , lastPagebreak: 0
+                , lineCount: 0
+                }
+              )
+            )
+          , pagebreak:
+            { badness: 0
+            , lastLinebreak: 0
+            , lastPagebreak: 0
+            , lineCount: 0
+            }
+          };
+        for (let currentBreak = 1; currentBreak < breakpoints; ++currentBreak) {
+          let linebreak =
+            Array.from
+            ( { length: maxLines }
+            , (x, i) =>
+              ( { badness: Infinity
+                , lastLinebreak: 0
+                , lastPagebreak: 0
+                , lineCount: 0
+                }
+              )
+            );
+
+          let pagebreak =
+            { badness: Infinity
+            , lastLinebreak: 0
+            , lastPagebreak: 0
+            , lineCount: 0
+            };
+
+          let keepGoing = true;
+
+          let breakpointsBeforeCurrentLine = 0;
+          let currentLineFromBeginning;
+          let isEndOfLine;
+          for (let i = 0;; ++i) {
+            if (breakpointsBeforeCurrentLine + lines[i].glues + 1 < currentBreak) {
+              breakpointsBeforeCurrentLine += lines[i].glues + 1;
+            } else {
+              let breakpointsInCurrentLine = currentBreak - breakpointsBeforeCurrentLine;
+              let breakPositionInLine = 0;
+              for (; breakpointsInCurrentLine > 0 && breakPositionInLine < lines[i].length; ++breakPositionInLine) {
+                if (lines[i][breakPositionInLine].glue) {
+                  breakpointsInCurrentLine -= 1;
+                }
+              }
+              currentLineFromBeginning = lines[i].slice(0, breakPositionInLine);
+              isEndOfLine = breakPositionInLine == lines[i].length;
+              break;
+            }
+          }
+
+          for (let lastLinebreak = currentBreak - 1; keepGoing && lastLinebreak >= breakpointsBeforeCurrentLine; --lastLinebreak) {
+            let currentLine = currentLineFromBeginning;
+            for (let lastLinebreakWithinLine = lastLinebreak - breakpointsBeforeCurrentLine; lastLinebreakWithinLine > 0;) {
+              if (currentLine[0].glue) {
+                lastLinebreakWithinLine -= 1;
+              }
+              currentLine = currentLine.slice(1);
+            }
+            currentLine = currentLine.map((word) => word.word).join("");
+
+            const width = measureWidth(font)(currentLine);
+
+            if (width > maxWidth) {
+              keepGoing = false;
+              break;
+            }
+
+            const spareWidth = (maxWidth - width) / maxWidth;
+
+            let hBadness = spareWidth * spareWidth * 100;
+
+            const terminatorBadness = (() => {
+              switch (currentLine.slice(-1)) {
+                case ">": return 0;
+                case ".": return 0;
+                case ";": return 1;
+                case ":": return 1;
+                case ",": return 5;
+                case "~": return 1000000;
+                default:  return 10;
+              }
+            })();
+
+            hBadness += terminatorBadness;
+
+            const calculate_vBadness = (lineCount) => square((maxLines - lineCount) / maxLines) + (isEndOfLine ? 0 : 1) + terminatorBadness;
+
+            for (let freeLines = 0; freeLines < maxLines; ++freeLines) {
+              // TODO penalise pagebreak midline
+
+              if (freeLines == 0) {
+                const potentialLinebreak = dp[lastLinebreak].pagebreak;
+                const lineCount = 1;
+                const vBadness = calculate_vBadness(lineCount);
+
+                if (potentialLinebreak.badness + hBadness <= linebreak[freeLines].badness) {
+                  linebreak[freeLines] =
+                    { badness: potentialLinebreak.badness + hBadness
+                    , lastLinebreak: lastLinebreak
+                    , lastPagebreak: lastLinebreak
+                    , lineCount: lineCount
+                    };
+                }
+
+                if (potentialLinebreak.badness + hBadness + vBadness <= pagebreak.badness) {
+                  pagebreak =
+                    { badness: potentialLinebreak.badness + hBadness + vBadness
+                    , lastLinebreak: lastLinebreak
+                    , lastPagebreak: lastLinebreak
+                    , lineCount: lineCount
+                    };
+                }
+              } else {
+                const potentialLinebreak = dp[lastLinebreak].linebreak[freeLines - 1];
+                const lineCount = potentialLinebreak.lineCount + 1;
+                const vBadness = calculate_vBadness(lineCount);
+
+                if (potentialLinebreak.badness + hBadness <= linebreak[freeLines].badness) {
+                  linebreak[freeLines] =
+                    { badness: potentialLinebreak.badness + hBadness
+                    , lastLinebreak: lastLinebreak
+                    , lastPagebreak: potentialLinebreak.lastPagebreak
+                    , lineCount: lineCount
+                    };
+                }
+
+                if (potentialLinebreak.badness + hBadness + vBadness <= pagebreak.badness) {
+                  pagebreak =
+                    { badness: potentialLinebreak.badness + hBadness + vBadness
+                    , lastLinebreak: lastLinebreak
+                    , lastPagebreak: potentialLinebreak.lastPagebreak
+                    , lineCount: lineCount
+                    };
+                }
+              }
+            }
+          }
+
+          dp[currentBreak] = {linebreak: linebreak, pagebreak: pagebreak};
+        }
+
+        const breaks = Array.from(function*() {
+          let i = {index: breakpoints - 1, pagebreak: true};
+          let nextPagebreak = dp[i.index].pagebreak.lastPagebreak;
+          let freeLines = maxLines - 1;
+          while (i.index > 0) {
+            yield i;
+
+            const index = dp[i.index].linebreak[freeLines].lastLinebreak;
+            i =
+              { index: index
+              , pagebreak: index == nextPagebreak
+              };
+
+            if (i.pagebreak) {
+              nextPagebreak = dp[i.index].pagebreak.lastPagebreak;
+            }
+
+            freeLines -= 1;
+            if (freeLines < 0) {
+              freeLines = maxLines - 1;
+            }
+          }
+        }()).reverse();
+
+        return Array.from(function*() {
+          let line = 0;
+          let word = 0;
+          let consumed = 0;
+          let chunk = [];
+          for (const break_ of breaks) {
+            let res = ""
+            while (consumed < break_.index) {
+              if (lines[line][word].glue) {
+                consumed += 1;
+              }
+              if (consumed < break_.index) {
+                res += lines[line][word].word;
+              }
+              word += 1;
+              if (word >= lines[line].length) {
+                line += 1;
+                word = 0;
+                consumed += 1;
+              }
+            }
+            chunk.push(res);
+            if (break_.pagebreak) {
+              yield {type: "body", lines: chunk, style: style, lineHeight: lineHeight};
+              chunk = [];
+            }
+          }
+        }());
+      };
+
+      const chunkToSlides = (style) => (chunk) => {
+        switch (chunk.type) {
+          case "title": {
+            const font = `${style.titleSize}pt "${style.fontFamily}"`;
+
+            chunk.style = style;
+            chunk.lineHeight = lineHeight(font);
+            return [chunk];
+          }
+          case "body": {
+            const maxWidth = (() => {
+              const margin = style.margin * style.size.height;
+              const padding = style.bodyPaddingH * style.size.height;
+              switch (style.cases.type) {
+                case "full":
+                  return style.size.width - 2 * padding;
+                case "horizontal":
+                  return style.size.width - 2 * margin - 2 * padding;
+                case "vertical":
+                  return (style.size.width - 2 * margin) * style.cases.split - 2 * padding;
+                default:
+                  return style.size.width - 2 * margin - 2 * padding;
+              }
+            })();
+
+            const font = `${style.bodySize}pt "${style.fontFamily}"`;
+
+            return splitChunk(style)(maxWidth)(style.maxLines)(font)(lineHeight(font))(chunk.body.split(/\n/g));
+          }
+          default:
+            return [];
+        }
+      };
+
+      const processVariant = (outputs) => (variant) => {
+        variant.slides = {};
+        for (const output of outputs) {
+          variant.slides[output.name] = variant.chunks.flatMap(chunkToSlides(output.style));
+        }
+        return variant;
+      };
+
+      const processDeck = (outputs) => (deck) => {
+        for (const variant in deck.variants) {
+          deck.variants[variant] = processVariant(outputs)(deck.variants[variant]);
+        }
+        return deck;
+      };
+
+      const processProgramme = (programme) => {
+        programme.decks = programme.decks.map(processDeck(programme.outputs));
+        return programme;
+      };
+
+      const tauri = window.__TAURI__;
+
+      let app = Elm.Client.init({
+        flags: {
+          tauri: Boolean(tauri),
+        },
+      });
+
+      let programmeWS = new WebSocket("ws://127.0.0.1:3000/programme");
+
+      programmeWS.onopen = (_) => {
+        programmeWS.onmessage = (programme) => {
+          app.ports.programmeRecv.send((() => {
+            try {
+              return JSON.parse(programme.data);
+            } catch (e) {
+              return null;
+            }
+          })());
+        };
+
+        app.ports.programmeSend.subscribe((programme) => {
+          programmeWS.send(JSON.stringify(processProgramme(programme)));
+        });
+      };
+
+      let liveWS = new WebSocket("ws://127.0.0.1:3000/live");
+
+      liveWS.onopen = (_) => {
+        liveWS.onmessage = (live) => {
+          app.ports.liveRecv.send((() => {
+            try {
+              return JSON.parse(live.data);
+            } catch (e) {
+              return null;
+            }
+          })());
+        };
+
+        app.ports.liveSend.subscribe((live) => {
+          liveWS.send(JSON.stringify(live));
+        });
+      };
+
+      const open = (extension) => {
+        if (tauri) {
+          return (async () => {
+            const filePath = await tauri.dialog.open({
+              defaultPath: "Programme.bcp",
+              title: "Open Programme",
+              filters: [{
+                name: "Breaking Cues Programme",
+                extensions: [extension]
+              }]
+            });
+            if (filePath) {
+              return await tauri.fs.readTextFile(filePath, {});
+            }
+          })();
+        } else {
+          return new Promise((resolve, reject) => {
+            input.onchange = (e) => e.target.files[0].text().then(resolve);
+            input.accept = `.${extension}`
+            input.click();
+          });
+        }
+      }
+
+      app.ports.open.subscribe(async (_) => {
+        const data = await open("bcp");
+        try {
+          programmeWS.send(JSON.stringify(processProgramme(JSON.parse(data))));
+        } catch (e) {}
+      });
+
+      app.ports.save.subscribe(async (data) => {
+        if (tauri) {
+          const filePath = await tauri.dialog.save({
+            defaultPath: "Programme.bcp",
+            title: "Save Programme",
+            filters: [{
+              name: "Breaking Cues Programme",
+              extensions: ["bcp"]
+            }]
+          });
+          if (filePath) {
+            await tauri.fs.writeTextFile(filePath, data, {});
+          }
+        }
+      });
+    </script>
+  </body>
+</html>
+

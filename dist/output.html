@@ -1,0 +1,30 @@
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Breaking Cues Output</title>
+    <script src="output.js"></script>
+  </head>
+  
+  <body style="margin: 0;">
+    <div id="output"></div>
+    <script>
+      var app = Elm.Output.init({
+        node: document.getElementById('output'),
+      });
+
+      let liveWS = new WebSocket("ws://127.0.0.1:3000/live");
+
+      liveWS.onopen = (_) => {
+        liveWS.onmessage = (live) => {
+          app.ports.liveRecv.send((() => {
+            try {
+              return JSON.parse(live.data);
+            } catch (e) {
+              return null;
+            }
+          })());
+        };
+      };
+    </script>
+  </body>
+</html>
