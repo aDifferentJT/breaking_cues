@@ -32,4 +32,5 @@ include_dir = "0.7.4"
 directories = "5.0.1"
 diesel = { version = "2.2.4", features = ["sqlite"] }
 itertools = "0.13.0"
+rusqlite = { version = "0.32.1", features = ["bundled"] }
 
