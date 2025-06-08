@@ -1,19 +1,10 @@
-module Form exposing (Field, FieldMaybe, field, fieldDynamic, fieldList, fieldMaybe, fieldMaybeDynamic, fieldMaybeList, fieldSelect, fieldSelectMaybe, fieldStripMaybe, float, id, input, inputMaybe, int, map, mapMaybe, mapMaybe2, maybe)
+module Form exposing (Field, FieldMaybe, Mapping, field, fieldDynamic, fieldList, fieldMaybe, fieldMaybeDynamic, fieldMaybeList, fieldSelect, fieldSelectMaybe, fieldStripMaybe, float, id, input, inputMaybe, int, map, mapMaybe, maybeFloat, maybeInt)
 
 import Html exposing (Html)
 import Html.Attributes
 import Html.Events
 import List.Extra as List
 import Maybe.Extra as Maybe
-
-
-type alias FieldMaybe1 a b c =
-    { label : String
-    , get : a -> c
-    , getMaybe : b -> Maybe c
-    , update : c -> a -> a
-    , updateMaybe : Maybe c -> b -> b
-    }
 
 
 type Field a
@@ -67,14 +58,14 @@ fieldDynamic =
     FieldDynamic
 
 
-fieldMaybe : String -> FieldMaybe String String
+fieldMaybe : String -> FieldMaybe String (Maybe String)
 fieldMaybe label =
     FieldMaybeString
         { label = label
         , get = \x -> x
-        , getMaybe = Just
+        , getMaybe = \x -> x
         , update = \x _ -> x
-        , updateMaybe = \x y -> Maybe.withDefault y x
+        , updateMaybe = \x _ -> x
         }
 
 
@@ -92,10 +83,6 @@ type alias Mapping a b =
     ( b -> a, (a -> a) -> (b -> b) )
 
 
-type alias MappingMaybe a b =
-    ( b -> Maybe a, (a -> a) -> (b -> b) )
-
-
 id : Mapping a a
 id =
     ( \x -> x, \f -> f )
@@ -106,14 +93,19 @@ int =
     ( String.fromInt, \f x -> Maybe.withDefault x <| String.toInt <| f <| String.fromInt x )
 
 
+maybeInt : Mapping (Maybe String) (Maybe Int)
+maybeInt =
+    ( Maybe.map String.fromInt, \f x -> Maybe.andThen String.toInt <| f <| Maybe.map String.fromInt x )
+
+
 float : Mapping String Float
 float =
     ( String.fromFloat, \f x -> Maybe.withDefault x <| String.toFloat <| f <| String.fromFloat x )
 
 
-maybe : Mapping a b -> MappingMaybe a (Maybe b)
-maybe ( f, g ) =
-    ( Maybe.map f, Maybe.map << g )
+maybeFloat : Mapping (Maybe String) (Maybe Float)
+maybeFloat =
+    ( Maybe.map String.fromFloat, \f x -> Maybe.andThen String.toFloat <| f <| Maybe.map String.fromFloat x )
 
 
 map : Mapping a b -> Field a -> Field b
@@ -147,14 +139,14 @@ map ( f, g ) field1 =
             FieldDynamic (map ( f, g ) << h << f)
 
 
-mapMaybe : Mapping a c -> MappingMaybe b d -> FieldMaybe a b -> FieldMaybe c d
+mapMaybe : Mapping a c -> Mapping b d -> FieldMaybe a b -> FieldMaybe c d
 mapMaybe ( f1, f2 ) ( f3, f4 ) field1 =
     case field1 of
         FieldMaybeString { label, get, getMaybe, update, updateMaybe } ->
             FieldMaybeString
                 { label = label
                 , get = get << f1
-                , getMaybe = Maybe.andThen getMaybe << f3
+                , getMaybe = getMaybe << f3
                 , update = f2 << update
                 , updateMaybe = f4 << updateMaybe
                 }
@@ -169,24 +161,19 @@ mapMaybe ( f1, f2 ) ( f3, f4 ) field1 =
                             , set = f2 set
                             , setMaybe = f4 setMaybe
                             , isThis = isThis << f1
-                            , isThisMaybe = Maybe.andThen isThisMaybe << f3
+                            , isThisMaybe = isThisMaybe << f3
                             }
                         )
                         cases
                 , setEmpty = f4 setEmpty
-                , hasValue = Maybe.unwrap False hasValue << f3
+                , hasValue = hasValue << f3
                 }
 
         FieldMaybeList fields ->
             FieldMaybeList <| List.map (mapMaybe ( f1, f2 ) ( f3, f4 )) fields
 
         FieldMaybeDynamic g ->
-            FieldMaybeDynamic <| \x y -> mapMaybe ( f1, f2 ) ( f3, f4 ) <| g (f1 x) (Maybe.andThen f3 y)
-
-
-mapMaybe2 : Mapping a b -> FieldMaybe a a -> FieldMaybe b (Maybe b)
-mapMaybe2 f =
-    mapMaybe f (maybe f)
+            FieldMaybeDynamic <| \x y -> mapMaybe ( f1, f2 ) ( f3, f4 ) <| g (f1 x) (Maybe.map f3 y)
 
 
 fieldStripMaybe : FieldMaybe a b -> Field a
@@ -261,7 +248,10 @@ inputMaybe : a -> b -> (b -> msg) -> FieldMaybe a b -> Html msg
 inputMaybe x y send field1 =
     case field1 of
         FieldMaybeString { label, get, getMaybe, updateMaybe } ->
-            inputMaybeRaw label (get x) (getMaybe y) (\z -> send <| updateMaybe z y)
+            inputMaybeRaw label
+                (get x)
+                (getMaybe y)
+                (\z -> send <| updateMaybe z y)
 
         FieldMaybeSelect { label, cases, setEmpty, hasValue } ->
             inputSelectMaybe label cases setEmpty hasValue x y send

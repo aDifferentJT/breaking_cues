@@ -94,31 +94,7 @@ view : Model a -> Html msg
 view model =
     case model.boxAttributes |> Maybe.oneOf [ Animator.current, Animator.previous ] of
         Just boxAttributes ->
-            box model.boxAttributes boxAttributes <|
-                case model.slide of
-                    Just ({ style, contents } as slide) ->
-                        case contents of
-                            Slide.Title { title, subtitle } ->
-                                [ Html.p
-                                    [ Html.Attributes.style "margin" "0px"
-                                    , fontSize style.titleSize
-                                    ]
-                                    [ textWithTags title ]
-                                , Html.p
-                                    [ Html.Attributes.style "margin" "0px"
-                                    , fontSize style.subtitleSize
-                                    , Html.Attributes.style "position" "absolute"
-                                    , Html.Attributes.style "top" <| String.fromFloat (boxAttributes.paddingV + boxAttributes.lineHeight) ++ "px"
-                                    , Html.Attributes.style "line-height" "1"
-                                    ]
-                                    [ textWithTags subtitle ]
-                                ]
-
-                            Slide.Body { lines } ->
-                                [ Html.div [ fontSize style.bodySize ] [ textWithTags <| String.replace "~" "" <| String.concat <| List.map (\line -> line ++ "\n") lines ] ]
-
-                    Nothing ->
-                        []
+            box model.boxAttributes boxAttributes
 
         Nothing ->
             Html.div [] []
@@ -147,11 +123,12 @@ type alias BoxAttributes =
     , right : Float
     , top : Float
     , bottom : Float
+    , slide : Slide
     }
 
 
 boxAttributesFromSlide : Slide -> BoxAttributes
-boxAttributesFromSlide { style, contents, lineHeight } =
+boxAttributesFromSlide ({ style, contents, lineHeight } as slide) =
     let
         scale : Float -> Float
         scale =
@@ -304,10 +281,11 @@ boxAttributesFromSlide { style, contents, lineHeight } =
 
             Style.Vertical { align, split } ->
                 margin
+    , slide = slide
     }
 
 
-box : Animator.Timeline (Maybe BoxAttributes) -> BoxAttributes -> List (Html msg) -> Html msg
+box : Animator.Timeline (Maybe BoxAttributes) -> BoxAttributes -> Html msg
 box boxAttributes default =
     let
         centerX =
@@ -342,7 +320,97 @@ box boxAttributes default =
         [ Html.Attributes.style "position" "absolute"
         , Html.Attributes.style "font-family" default.fontFamily
         , Html.Attributes.style "white-space" "pre-wrap"
+        , Html.Attributes.style "overflow" "clip"
         ]
+        (List.concat
+            [ case Animator.current boxAttributes of
+                Just boxAttributes2 ->
+                    [ Animator.Css.div boxAttributes
+                        [ Animator.Css.opacity <|
+                            \boxAttributes3 ->
+                                Animator.at <|
+                                    if Just boxAttributes2 == boxAttributes3 then
+                                        1
+
+                                    else
+                                        0
+                        ]
+                        []
+                      <|
+                        case boxAttributes2.slide.contents of
+                            Slide.Title { title, subtitle } ->
+                                [ Html.p
+                                    [ Html.Attributes.style "margin" "0px"
+                                    , fontSize boxAttributes2.slide.style.titleSize
+                                    , Html.Attributes.style "position" "absolute"
+                                    ]
+                                    [ textWithTags title ]
+                                , Html.p
+                                    [ Html.Attributes.style "margin" "0px"
+                                    , fontSize boxAttributes2.slide.style.subtitleSize
+                                    , Html.Attributes.style "position" "absolute"
+                                    , Html.Attributes.style "top" <| String.fromFloat (boxAttributes2.paddingV + boxAttributes2.lineHeight) ++ "px"
+                                    , Html.Attributes.style "line-height" "1"
+                                    ]
+                                    [ textWithTags subtitle ]
+                                ]
+
+                            Slide.Body { lines } ->
+                                [ Html.div
+                                    [ fontSize boxAttributes2.slide.style.bodySize
+                                    , Html.Attributes.style "position" "absolute"
+                                    ]
+                                    [ textWithTags <| String.replace "~" "" <| String.concat <| List.map (\line -> line ++ "\n") lines ]
+                                ]
+                    ]
+
+                Nothing ->
+                    []
+            , case Animator.previous boxAttributes of
+                Just boxAttributes2 ->
+                    [ Animator.Css.div boxAttributes
+                        [ Animator.Css.opacity <|
+                            \boxAttributes3 ->
+                                Animator.at <|
+                                    if Just boxAttributes2 == boxAttributes3 then
+                                        1
+
+                                    else
+                                        0
+                        ]
+                        []
+                      <|
+                        case boxAttributes2.slide.contents of
+                            Slide.Title { title, subtitle } ->
+                                [ Html.p
+                                    [ Html.Attributes.style "margin" "0px"
+                                    , fontSize boxAttributes2.slide.style.titleSize
+                                    , Html.Attributes.style "position" "absolute"
+                                    ]
+                                    [ textWithTags title ]
+                                , Html.p
+                                    [ Html.Attributes.style "margin" "0px"
+                                    , fontSize boxAttributes2.slide.style.subtitleSize
+                                    , Html.Attributes.style "position" "absolute"
+                                    , Html.Attributes.style "top" <| String.fromFloat (boxAttributes2.paddingV + boxAttributes2.lineHeight) ++ "px"
+                                    , Html.Attributes.style "line-height" "1"
+                                    ]
+                                    [ textWithTags subtitle ]
+                                ]
+
+                            Slide.Body { lines } ->
+                                [ Html.div
+                                    [ fontSize boxAttributes2.slide.style.bodySize
+                                    , Html.Attributes.style "position" "absolute"
+                                    ]
+                                    [ textWithTags <| String.replace "~" "" <| String.concat <| List.map (\line -> line ++ "\n") lines ]
+                                ]
+                    ]
+
+                Nothing ->
+                    []
+            ]
+        )
 
 
 clear : Color

@@ -70,7 +70,7 @@ fetch { hymnal, number } =
                             |> getElementById "text"
                             |> Maybe.map
                                 (getChildren
-                                    >> List.map (getText >> trimLeadingInteger >> String.trim)
+                                    >> List.map (getText >> trimLeadingInteger >> String.split "\n" >> List.map String.trim >> String.join "\n")
                                     >> List.filter ((/=) "")
                                 )
                             |> Maybe.withDefault []

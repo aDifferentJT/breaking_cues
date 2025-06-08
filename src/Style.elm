@@ -1,4 +1,4 @@
-module Style exposing (HAlign(..), LocalStyle, Size, Style, StyleCases(..), VAlign(..), addLocal, decode, decodeLocal, default, emptyLocal, encode, encodeLocal)
+module Style exposing (ComparableStyle, HAlign(..), LocalStyle, Size, Style, StyleCases(..), VAlign(..), addLocal, decode, decodeLocal, default, emptyLocal, encode, encodeLocal, styleToComparable)
 
 import Basics.Extra exposing (uncurry)
 import Json.Decode
@@ -26,10 +26,88 @@ type alias Style =
     }
 
 
+type alias ComparableStyle =
+    ( ComparableSize
+    , ( ComparableStyleCases
+      , ( Float
+        , ( Float
+          , ( Float
+            , ( String
+              , ( String
+                , ( Float
+                  , ( Float
+                    , ( Float
+                      , ( Float
+                        , ( Int
+                          , ( String
+                            , ( Float
+                              , ( Float
+                                , Float
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+
+
+styleToComparable : Style -> ComparableStyle
+styleToComparable { size, cases, margin, titleCornerRadius, bodyCornerRadius, backgroundColour, textColour, titlePaddingH, titlePaddingV, bodyPaddingH, bodyPaddingV, maxLines, fontFamily, titleSize, subtitleSize, bodySize } =
+    ( sizeToComparable size
+    , ( styleCasesToComparable cases
+      , ( margin
+        , ( titleCornerRadius
+          , ( bodyCornerRadius
+            , ( backgroundColour
+              , ( textColour
+                , ( titlePaddingH
+                  , ( titlePaddingV
+                    , ( bodyPaddingH
+                      , ( bodyPaddingV
+                        , ( maxLines
+                          , ( fontFamily
+                            , ( titleSize
+                              , ( subtitleSize
+                                , bodySize
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+
+
 type alias Size =
     { height : Int
     , width : Int
     }
+
+
+type alias ComparableSize =
+    ( Int, Int )
+
+
+sizeToComparable : Size -> ComparableSize
+sizeToComparable { height, width } =
+    ( height, width )
 
 
 type StyleCases
@@ -43,16 +121,67 @@ type StyleCases
         }
 
 
+type alias ComparableStyleCases =
+    ( Int, ComparableVAlign, ( ComparableHAlign, Float ) )
+
+
+styleCasesToComparable : StyleCases -> ComparableStyleCases
+styleCasesToComparable cases =
+    case cases of
+        Full ->
+            ( 0, 0, ( 0, 0 ) )
+
+        Horizontal { align } ->
+            ( 1, vAlignToComparable align, ( 0, 0 ) )
+
+        Vertical { align, split } ->
+            ( 2, 0, ( hAlignToComparable align, split ) )
+
+
 type HAlign
     = Left
     | HCenter
     | Right
 
 
+type alias ComparableHAlign =
+    Int
+
+
+hAlignToComparable : HAlign -> ComparableHAlign
+hAlignToComparable align =
+    case align of
+        Left ->
+            0
+
+        HCenter ->
+            1
+
+        Right ->
+            2
+
+
 type VAlign
     = Top
     | VCenter
     | Bottom
+
+
+type alias ComparableVAlign =
+    Int
+
+
+vAlignToComparable : VAlign -> ComparableVAlign
+vAlignToComparable align =
+    case align of
+        Top ->
+            0
+
+        VCenter ->
+            1
+
+        Bottom ->
+            2
 
 
 type alias LocalStyle =

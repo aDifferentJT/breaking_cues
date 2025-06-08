@@ -6,6 +6,7 @@
     "elm-version": "0.19.1",
     "dependencies": {
         "direct": {
+            "Janiczek/elm-list-cartesian": "1.0.2",
             "avh4/elm-color": "1.0.0",
             "danneu/html-parser": "2.0.3",
             "elm/browser": "1.0.2",
@@ -24,6 +25,7 @@
             "lue-bird/elm-bits": "10.1.1",
             "mdgriffith/elm-animator": "1.1.1",
             "prikhi/http-tasks": "1.0.0",
+            "turboMaCk/any-dict": "3.0.0",
             "zaboco/elm-draggable": "5.0.0"
         },
         "indirect": {

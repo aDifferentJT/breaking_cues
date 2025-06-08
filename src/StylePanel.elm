@@ -40,7 +40,7 @@ outputPanel { output, updateOutput } =
 localStylePanel : { default : Style, style : LocalStyle, updateStyle : LocalStyle -> msg } -> Html msg
 localStylePanel { default, style, updateStyle } =
     Html.form [ Html.Attributes.style "margin" "6px" ] <|
-        [ Form.inputMaybe default style updateStyle <| Form.mapMaybe ( .cases, \f s -> { s | cases = f s.cases } ) ( Just << .cases, \f s -> { s | cases = f s.cases } ) <| Form.fieldSelectMaybe "Style" styleCases
+        [ Form.inputMaybe default style updateStyle <| Form.mapMaybe ( .cases, \f s -> { s | cases = f s.cases } ) ( .cases, \f s -> { s | cases = f s.cases } ) <| Form.fieldSelectMaybe "Style" styleCases
         , Form.input style updateStyle <|
             case style.cases of
                 Nothing ->
@@ -103,20 +103,20 @@ caseSpecificFields =
 
 commonFields : List (Form.FieldMaybe Style LocalStyle)
 commonFields =
-    [ Form.mapMaybe ( .margin, \f s -> { s | margin = f s.margin } ) ( Just << .margin, \f s -> { s | margin = f s.margin } ) <| Form.mapMaybe2 Form.float <| Form.fieldMaybe "Margin"
-    , Form.mapMaybe ( .titleCornerRadius, \f s -> { s | titleCornerRadius = f s.titleCornerRadius } ) ( Just << .titleCornerRadius, \f s -> { s | titleCornerRadius = f s.titleCornerRadius } ) <| Form.mapMaybe2 Form.float <| Form.fieldMaybe "Title Corner Radius"
-    , Form.mapMaybe ( .bodyCornerRadius, \f s -> { s | bodyCornerRadius = f s.bodyCornerRadius } ) ( Just << .bodyCornerRadius, \f s -> { s | bodyCornerRadius = f s.bodyCornerRadius } ) <| Form.mapMaybe2 Form.float <| Form.fieldMaybe "Body Corner Radius"
-    , Form.mapMaybe ( .backgroundColour, \f s -> { s | backgroundColour = f s.backgroundColour } ) ( Just << .backgroundColour, \f s -> { s | backgroundColour = f s.backgroundColour } ) <| Form.mapMaybe2 Form.id <| Form.fieldMaybe "Background Colour"
-    , Form.mapMaybe ( .textColour, \f s -> { s | textColour = f s.textColour } ) ( Just << .textColour, \f s -> { s | textColour = f s.textColour } ) <| Form.mapMaybe2 Form.id <| Form.fieldMaybe "Text Colour"
-    , Form.mapMaybe ( .titlePaddingH, \f s -> { s | titlePaddingH = f s.titlePaddingH } ) ( Just << .titlePaddingH, \f s -> { s | titlePaddingH = f s.titlePaddingH } ) <| Form.mapMaybe2 Form.float <| Form.fieldMaybe "Title Horizontal Padding"
-    , Form.mapMaybe ( .titlePaddingV, \f s -> { s | titlePaddingV = f s.titlePaddingV } ) ( Just << .titlePaddingV, \f s -> { s | titlePaddingV = f s.titlePaddingV } ) <| Form.mapMaybe2 Form.float <| Form.fieldMaybe "Title Vertical Padding"
-    , Form.mapMaybe ( .bodyPaddingH, \f s -> { s | bodyPaddingH = f s.bodyPaddingH } ) ( Just << .bodyPaddingH, \f s -> { s | bodyPaddingH = f s.bodyPaddingH } ) <| Form.mapMaybe2 Form.float <| Form.fieldMaybe "Body Horizontal Padding"
-    , Form.mapMaybe ( .bodyPaddingV, \f s -> { s | bodyPaddingV = f s.bodyPaddingV } ) ( Just << .bodyPaddingV, \f s -> { s | bodyPaddingV = f s.bodyPaddingV } ) <| Form.mapMaybe2 Form.float <| Form.fieldMaybe "Body Vertical Padding"
-    , Form.mapMaybe ( .maxLines, \f s -> { s | maxLines = f s.maxLines } ) ( Just << .maxLines, \f s -> { s | maxLines = f s.maxLines } ) <| Form.mapMaybe2 Form.int <| Form.fieldMaybe "Max Lines"
-    , Form.mapMaybe ( .fontFamily, \f s -> { s | fontFamily = f s.fontFamily } ) ( Just << .fontFamily, \f s -> { s | fontFamily = f s.fontFamily } ) <| Form.mapMaybe2 Form.id <| Form.fieldMaybe "Font Family"
-    , Form.mapMaybe ( .titleSize, \f s -> { s | titleSize = f s.titleSize } ) ( Just << .titleSize, \f s -> { s | titleSize = f s.titleSize } ) <| Form.mapMaybe2 Form.float <| Form.fieldMaybe "Title Size"
-    , Form.mapMaybe ( .subtitleSize, \f s -> { s | subtitleSize = f s.subtitleSize } ) ( Just << .subtitleSize, \f s -> { s | subtitleSize = f s.subtitleSize } ) <| Form.mapMaybe2 Form.float <| Form.fieldMaybe "Subtitle Size"
-    , Form.mapMaybe ( .bodySize, \f s -> { s | bodySize = f s.bodySize } ) ( Just << .bodySize, \f s -> { s | bodySize = f s.bodySize } ) <| Form.mapMaybe2 Form.float <| Form.fieldMaybe "Body Size"
+    [ Form.mapMaybe ( .margin, \f s -> { s | margin = f s.margin } ) ( .margin, \f s -> { s | margin = f s.margin } ) <| Form.mapMaybe Form.float Form.maybeFloat <| Form.fieldMaybe "Margin"
+    , Form.mapMaybe ( .titleCornerRadius, \f s -> { s | titleCornerRadius = f s.titleCornerRadius } ) ( .titleCornerRadius, \f s -> { s | titleCornerRadius = f s.titleCornerRadius } ) <| Form.mapMaybe Form.float Form.maybeFloat <| Form.fieldMaybe "Title Corner Radius"
+    , Form.mapMaybe ( .bodyCornerRadius, \f s -> { s | bodyCornerRadius = f s.bodyCornerRadius } ) ( .bodyCornerRadius, \f s -> { s | bodyCornerRadius = f s.bodyCornerRadius } ) <| Form.mapMaybe Form.float Form.maybeFloat <| Form.fieldMaybe "Body Corner Radius"
+    , Form.mapMaybe ( .backgroundColour, \f s -> { s | backgroundColour = f s.backgroundColour } ) ( .backgroundColour, \f s -> { s | backgroundColour = f s.backgroundColour } ) <| Form.fieldMaybe "Background Colour"
+    , Form.mapMaybe ( .textColour, \f s -> { s | textColour = f s.textColour } ) ( .textColour, \f s -> { s | textColour = f s.textColour } ) <| Form.fieldMaybe "Text Colour"
+    , Form.mapMaybe ( .titlePaddingH, \f s -> { s | titlePaddingH = f s.titlePaddingH } ) ( .titlePaddingH, \f s -> { s | titlePaddingH = f s.titlePaddingH } ) <| Form.mapMaybe Form.float Form.maybeFloat <| Form.fieldMaybe "Title Horizontal Padding"
+    , Form.mapMaybe ( .titlePaddingV, \f s -> { s | titlePaddingV = f s.titlePaddingV } ) ( .titlePaddingV, \f s -> { s | titlePaddingV = f s.titlePaddingV } ) <| Form.mapMaybe Form.float Form.maybeFloat <| Form.fieldMaybe "Title Vertical Padding"
+    , Form.mapMaybe ( .bodyPaddingH, \f s -> { s | bodyPaddingH = f s.bodyPaddingH } ) ( .bodyPaddingH, \f s -> { s | bodyPaddingH = f s.bodyPaddingH } ) <| Form.mapMaybe Form.float Form.maybeFloat <| Form.fieldMaybe "Body Horizontal Padding"
+    , Form.mapMaybe ( .bodyPaddingV, \f s -> { s | bodyPaddingV = f s.bodyPaddingV } ) ( .bodyPaddingV, \f s -> { s | bodyPaddingV = f s.bodyPaddingV } ) <| Form.mapMaybe Form.float Form.maybeFloat <| Form.fieldMaybe "Body Vertical Padding"
+    , Form.mapMaybe ( .maxLines, \f s -> { s | maxLines = f s.maxLines } ) ( .maxLines, \f s -> { s | maxLines = f s.maxLines } ) <| Form.mapMaybe Form.int Form.maybeInt <| Form.fieldMaybe "Max Lines"
+    , Form.mapMaybe ( .fontFamily, \f s -> { s | fontFamily = f s.fontFamily } ) ( .fontFamily, \f s -> { s | fontFamily = f s.fontFamily } ) <| Form.fieldMaybe "Font Family"
+    , Form.mapMaybe ( .titleSize, \f s -> { s | titleSize = f s.titleSize } ) ( .titleSize, \f s -> { s | titleSize = f s.titleSize } ) <| Form.mapMaybe Form.float Form.maybeFloat <| Form.fieldMaybe "Title Size"
+    , Form.mapMaybe ( .subtitleSize, \f s -> { s | subtitleSize = f s.subtitleSize } ) ( .subtitleSize, \f s -> { s | subtitleSize = f s.subtitleSize } ) <| Form.mapMaybe Form.float Form.maybeFloat <| Form.fieldMaybe "Subtitle Size"
+    , Form.mapMaybe ( .bodySize, \f s -> { s | bodySize = f s.bodySize } ) ( .bodySize, \f s -> { s | bodySize = f s.bodySize } ) <| Form.mapMaybe Form.float Form.maybeFloat <| Form.fieldMaybe "Body Size"
     ]
 
 

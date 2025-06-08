@@ -181,8 +181,6 @@
           }
         }
 
-        console.log(words);
-
         const lastWord = () => words[words.length - 1];
 
         const chunks = [];
@@ -282,6 +280,10 @@
         },
       });
 
+      app.ports.chunkSplitSend.subscribe(({chunk, style}) => {
+        app.ports.chunkSplitRecv.send({chunk: chunk, style: style, slides: chunkToSlides(style)(chunk)})
+      });
+
       let programmeWS = new WebSocket("ws://127.0.0.1:3000/programme");
 
       programmeWS.onopen = (_) => {
@@ -296,7 +298,7 @@
         };
 
         app.ports.programmeSend.subscribe((programme) => {
-          programmeWS.send(JSON.stringify(processProgramme(programme)));
+          programmeWS.send(JSON.stringify(programme));
         });
       };
 
@@ -345,7 +347,7 @@
       app.ports.open.subscribe(async (_) => {
         const data = await open("bcp");
         try {
-          programmeWS.send(JSON.stringify(processProgramme(JSON.parse(data))));
+          programmeWS.send(data);
         } catch (e) {}
       });
 

@@ -7,6 +7,7 @@ import Browser.Events
 import Browser.Navigation
 import Deck exposing (Deck)
 import Dict exposing (Dict)
+import Dict.Any exposing (AnyDict)
 import Draggable
 import Draggable.Events
 import EditableList
@@ -21,6 +22,7 @@ import Html.Events
 import Http
 import Json.Decode
 import Json.Encode
+import List.Cartesian
 import List.Extra as List
 import Output
 import Programme exposing (Programme)
@@ -33,10 +35,16 @@ import Url exposing (Url)
 import Url.Builder
 
 
-port programmeRecv : (Json.Decode.Value -> msg) -> Sub msg
+port chunkSplitSend : Json.Encode.Value -> Cmd msg
+
+
+port chunkSplitRecv : (Json.Decode.Value -> msg) -> Sub msg
 
 
 port programmeSend : Json.Encode.Value -> Cmd msg
+
+
+port programmeRecv : (Json.Decode.Value -> msg) -> Sub msg
 
 
 port open : () -> Cmd msg
@@ -71,8 +79,13 @@ type FetchTab
     | Hymn Fetch.Hymn.Params
 
 
+type alias ChunkToSlides =
+    AnyDict ( Deck.ComparableChunk, Style.ComparableStyle ) ( Deck.Chunk, Style ) (List Slide)
+
+
 type alias Model =
     { tauri : Bool
+    , chunkToSlides : ChunkToSlides
     , programme : Programme
     , programmeTab : ProgrammeTab
     , programmeList : EditableList.Model Deck Msg
@@ -103,10 +116,24 @@ type alias PreviewPanelModel =
 type Msg
     = Batch (List Msg)
     | RunCmd (Cmd Msg)
+    | ChunkSplitRecv ( Deck.Chunk, Style ) (List Slide)
     | ProgrammeRecv Programme
-    | ProgrammeSend Programme
+    | RefreshSlides
     | UpdateOutputs (List Programme.Output)
     | UpdateDecks (List Deck)
+    | AddDeck Deck
+    | RemoveDeck Int
+    | UpdateDeck Int Deck
+    | UpdateDeckTitle Int String
+    | AddVariant Int Deck.Variant
+    | RemoveVariant Int Int
+    | UpdateVariant Int Int Deck.Variant
+    | UpdateVariantName Int Int String
+    | UpdateVariantStyle Int Int String LocalStyle
+    | AddChunk Int Int Deck.Chunk
+    | RemoveChunk Int Int Int
+    | UpdateChunk Int Int Int Deck.Chunk
+    | UpdateDefaultVariant Int Int
     | OnResize
     | ProgrammeSwitchTab ProgrammeTab
     | ProgrammeList (EditableList.Msg Deck Msg)
@@ -147,6 +174,7 @@ main =
 init : Flags -> ( Model, Cmd Msg )
 init { tauri } =
     ( { tauri = tauri
+      , chunkToSlides = Dict.Any.empty (\( chunk, style ) -> ( Deck.chunkToComparable chunk, Style.styleToComparable style ))
       , programme =
             { decks = []
             , outputs = [ { name = "Broadcast", style = Style.default } ]
@@ -231,6 +259,15 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                     , Html.div
                                         [ Html.Attributes.class "btn"
                                         , Html.Attributes.class "btn-outline-primary"
+                                        , Html.Attributes.class "bi-arrow-repeat"
+                                        , Html.Attributes.style "margin-left" "4px"
+                                        , Html.Attributes.style "margin-right" "4px"
+                                        , Html.Events.onClick <| RefreshSlides
+                                        ]
+                                        []
+                                    , Html.div
+                                        [ Html.Attributes.class "btn"
+                                        , Html.Attributes.class "btn-outline-primary"
                                         , Html.Attributes.class "bi-folder"
                                         , Html.Attributes.style "margin-left" "4px"
                                         , Html.Attributes.style "border-top-right-radius" "0px"
@@ -266,7 +303,7 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                         , Html.Attributes.style "padding-right" "10px"
                                         , Html.Attributes.style "border-top-right-radius" "0px"
                                         , Html.Attributes.style "border-bottom-right-radius" "0px"
-                                        , Html.Events.onClick <| UpdateDecks <| programme.decks ++ [ Deck.new <| (+) 1 <| List.foldl max 0 <| List.map (\deck -> deck.id) <| programme.decks ]
+                                        , Html.Events.onClick <| AddDeck <| Deck.new <| (+) 1 <| List.foldl max 0 <| List.map (\deck -> deck.id) <| programme.decks
                                         ]
                                         []
                                     , Html.div
@@ -303,7 +340,7 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                         Html.li
                                                             ([ Html.Attributes.class "list-group-item"
                                                              , Html.Attributes.classList [ ( "active", active ) ]
-                                                             , Html.Events.onClick (PreviewSelect (Just { id = deck.id, variant = 0 }))
+                                                             , Html.Events.onClick (PreviewSelect (Just { id = deck.id, variant = deck.defaultVariant }))
                                                              , Html.Attributes.style "display" "flex"
                                                              , Html.Attributes.style "flex-direction" "row"
                                                              , Html.Attributes.style "align-items" "center"
@@ -341,7 +378,7 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                                 , Html.Attributes.class "bi-x-lg"
                                                                 , Html.Attributes.style "border-top-left-radius" "0px"
                                                                 , Html.Attributes.style "border-bottom-left-radius" "0px"
-                                                                , Html.Events.stopPropagationOn "click" <| Json.Decode.succeed ( UpdateDecks <| List.filter ((/=) deck) programme.decks, True )
+                                                                , Html.Events.stopPropagationOn "click" <| Json.Decode.succeed ( RemoveDeck deck.id, True )
                                                                 ]
                                                                 []
                                                             ]
@@ -459,23 +496,6 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                     [ case ( previewSelected, List.filter (hasId previewSelected) programme.decks ) of
                         ( Just previewSelected_, [ deck ] ) ->
                             let
-                                updateDeck : Deck -> Msg
-                                updateDeck newDeck =
-                                    UpdateDecks <|
-                                        List.map
-                                            (\deck_ ->
-                                                if deck_.id == deck.id then
-                                                    newDeck
-
-                                                else
-                                                    deck_
-                                            )
-                                            programme.decks
-
-                                updateVariant : Deck.Variant -> Msg
-                                updateVariant newVariant =
-                                    updateDeck { deck | variants = List.setAt previewSelected_.variant newVariant deck.variants }
-
                                 maybeVariant : Maybe Deck.Variant
                                 maybeVariant =
                                     List.getAt previewSelected_.variant deck.variants
@@ -495,17 +515,7 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                 [ Html.Attributes.class "form-control"
                                                 , Html.Attributes.value <| Maybe.withDefault "" deck.title
                                                 , Html.Attributes.placeholder <| Deck.getTitle deck
-                                                , Html.Events.onInput <|
-                                                    \value ->
-                                                        updateDeck
-                                                            { deck
-                                                                | title =
-                                                                    if value == "" then
-                                                                        Nothing
-
-                                                                    else
-                                                                        Just value
-                                                            }
+                                                , Html.Events.onInput <| UpdateDeckTitle deck.id
                                                 ]
                                                 []
                                             ]
@@ -529,7 +539,7 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                                 \chunks ->
                                                                     case maybeVariant of
                                                                         Just variant ->
-                                                                            updateVariant { variant | chunks = chunks }
+                                                                            UpdateVariant deck.id previewSelected_.variant { variant | chunks = chunks }
 
                                                                         Nothing ->
                                                                             Batch []
@@ -576,7 +586,10 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                         ]
                                         [ let
                                             selectVariant index =
-                                                PreviewSelect <| Just { previewSelected_ | variant = index }
+                                                Batch
+                                                    [ PreviewSelect <| Just { previewSelected_ | variant = index }
+                                                    , UpdateDefaultVariant deck.id index
+                                                    ]
                                           in
                                           tabBar <|
                                             List.indexedMap
@@ -591,14 +604,12 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                                     ]
                                                                     [ Html.input
                                                                         [ Html.Attributes.value name
-                                                                        , Html.Events.onInput <|
-                                                                            \value ->
-                                                                                updateDeck { deck | variants = List.setAt index { variant | name = value } deck.variants }
+                                                                        , Html.Events.onInput <| UpdateVariantName deck.id index
                                                                         ]
                                                                         []
                                                                     , Html.div
                                                                         [ Html.Attributes.class "bi-x"
-                                                                        , Html.Events.stopPropagationOn "click" <| Json.Decode.succeed ( updateDeck { deck | variants = List.removeAt index deck.variants }, True )
+                                                                        , Html.Events.stopPropagationOn "click" <| Json.Decode.succeed ( RemoveVariant deck.id index, True )
                                                                         ]
                                                                         []
                                                                     ]
@@ -611,10 +622,9 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                 deck.variants
                                                 ++ [ { msg =
                                                         Batch
-                                                            [ updateDeck
-                                                                { deck
-                                                                    | variants = deck.variants ++ [ maybeVariant |> Maybe.withDefault { name = "New Variant", chunks = [], style = Dict.empty, slides = Dict.empty } ]
-                                                                }
+                                                            [ AddVariant deck.id <|
+                                                                Maybe.withDefault { name = "New Variant", chunks = [], style = Dict.empty, slides = Dict.empty } <|
+                                                                    maybeVariant
                                                             , selectVariant <| List.length deck.variants
                                                             ]
                                                      , label = Html.text "+"
@@ -697,10 +707,6 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                                             , value = chunk
                                                                             , view =
                                                                                 \{ topLevelAttributes, dragHandleAttributes } ->
-                                                                                    let
-                                                                                        updateChunk newChunk =
-                                                                                            updateVariant { variant | chunks = List.setAt chunkIndex newChunk variant.chunks }
-                                                                                    in
                                                                                     Html.li ([ Html.Attributes.class "list-group-item" ] ++ topLevelAttributes)
                                                                                         (Html.div
                                                                                             [ Html.Attributes.style "display" "flex"
@@ -719,7 +725,7 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                                                                                     False
                                                                                                       in
                                                                                                       { msg =
-                                                                                                            updateChunk <|
+                                                                                                            UpdateChunk deck.id previewSelected_.variant chunkIndex <|
                                                                                                                 if active then
                                                                                                                     chunk
 
@@ -738,7 +744,7 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                                                                                     False
                                                                                                       in
                                                                                                       { msg =
-                                                                                                            updateChunk <|
+                                                                                                            UpdateChunk deck.id previewSelected_.variant chunkIndex <|
                                                                                                                 if active then
                                                                                                                     chunk
 
@@ -765,7 +771,7 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                                                                 , Html.Attributes.class "bi-x-lg"
                                                                                                 , Html.Attributes.style "border-top-left-radius" "0px"
                                                                                                 , Html.Attributes.style "border-bottom-left-radius" "0px"
-                                                                                                , Html.Events.onClick <| updateVariant { variant | chunks = List.removeAt chunkIndex variant.chunks }
+                                                                                                , Html.Events.onClick <| RemoveChunk deck.id previewSelected_.variant chunkIndex
                                                                                                 ]
                                                                                                 []
                                                                                             ]
@@ -775,7 +781,11 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                                                                             [ Html.input
                                                                                                                 [ Html.Attributes.style "width" "100%"
                                                                                                                 , Html.Attributes.value title
-                                                                                                                , Html.Events.onInput (\newTitle -> updateChunk <| Deck.Title { title = newTitle, subtitle = subtitle })
+                                                                                                                , Html.Events.onInput
+                                                                                                                    (\newTitle ->
+                                                                                                                        UpdateChunk deck.id previewSelected_.variant chunkIndex <|
+                                                                                                                            Deck.Title { title = newTitle, subtitle = subtitle }
+                                                                                                                    )
                                                                                                                 ]
                                                                                                                 []
                                                                                                             ]
@@ -783,51 +793,73 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                                                                             [ Html.input
                                                                                                                 [ Html.Attributes.style "width" "100%"
                                                                                                                 , Html.Attributes.value subtitle
-                                                                                                                , Html.Events.onInput (\newSubtitle -> updateChunk <| Deck.Title { title = title, subtitle = newSubtitle })
+                                                                                                                , Html.Events.onInput
+                                                                                                                    (\newSubtitle ->
+                                                                                                                        UpdateChunk deck.id previewSelected_.variant chunkIndex <|
+                                                                                                                            Deck.Title { title = title, subtitle = newSubtitle }
+                                                                                                                    )
                                                                                                                 ]
                                                                                                                 []
                                                                                                             ]
                                                                                                         ]
 
                                                                                                     Deck.Body body ->
-                                                                                                        [ Html.textarea
-                                                                                                            [ Html.Attributes.style "width" "100%"
-                                                                                                            , Html.Attributes.style "resize" "none"
-                                                                                                            , Html.Events.onInput (updateChunk << Deck.Body)
-                                                                                                            , Html.Events.preventDefaultOn "keydown" <|
-                                                                                                                Json.Decode.map5
-                                                                                                                    (\key alt selectionStart selectionEnd value ->
-                                                                                                                        case ( key, alt ) of
-                                                                                                                            ( "Enter", True ) ->
-                                                                                                                                ( updateVariant
-                                                                                                                                    { variant
-                                                                                                                                        | chunks =
-                                                                                                                                            List.take chunkIndex variant.chunks
-                                                                                                                                                ++ [ Deck.Body <| String.trim <| String.left selectionStart value
-                                                                                                                                                   , Deck.Body <| String.trim <| String.dropLeft selectionEnd value
-                                                                                                                                                   ]
-                                                                                                                                                ++ List.drop (chunkIndex + 1) variant.chunks
-                                                                                                                                    }
-                                                                                                                                , True
-                                                                                                                                )
-
-                                                                                                                            ( "Backspace", True ) ->
-                                                                                                                                ( updateVariant { variant | chunks = List.removeAt chunkIndex variant.chunks }
-                                                                                                                                , True
-                                                                                                                                )
-
-                                                                                                                            _ ->
-                                                                                                                                ( updateVariant variant, False )
-                                                                                                                    )
-                                                                                                                    (Json.Decode.field "key" Json.Decode.string)
-                                                                                                                    (Json.Decode.field "altKey" Json.Decode.bool)
-                                                                                                                    (Json.Decode.at [ "target", "selectionStart" ] Json.Decode.int)
-                                                                                                                    (Json.Decode.at [ "target", "selectionEnd" ] Json.Decode.int)
-                                                                                                                    Html.Events.targetValue
-                                                                                                            , Html.Attributes.value body
-                                                                                                            , Html.Attributes.rows (body |> String.lines |> List.length)
+                                                                                                        [ Html.div
+                                                                                                            [ Html.Attributes.style "display" "flex"
+                                                                                                            , Html.Attributes.style "align-items" "stretch"
                                                                                                             ]
-                                                                                                            []
+                                                                                                            [ Html.textarea
+                                                                                                                [ Html.Attributes.style "width" "100%"
+                                                                                                                , Html.Attributes.style "flex-shrink" "0"
+                                                                                                                , Html.Attributes.style "padding" "2px"
+                                                                                                                , Html.Attributes.style "resize" "none"
+                                                                                                                , Html.Events.onInput <|
+                                                                                                                    UpdateChunk deck.id previewSelected_.variant chunkIndex
+                                                                                                                        << Deck.Body
+                                                                                                                , Html.Events.preventDefaultOn "keydown" <|
+                                                                                                                    Json.Decode.map5
+                                                                                                                        (\key alt selectionStart selectionEnd value ->
+                                                                                                                            case ( key, alt ) of
+                                                                                                                                ( "Enter", True ) ->
+                                                                                                                                    ( UpdateVariant deck.id
+                                                                                                                                        previewSelected_.variant
+                                                                                                                                        { variant
+                                                                                                                                            | chunks =
+                                                                                                                                                List.take chunkIndex variant.chunks
+                                                                                                                                                    ++ [ Deck.Body <| String.trim <| String.left selectionStart value
+                                                                                                                                                       , Deck.Body <| String.trim <| String.dropLeft selectionEnd value
+                                                                                                                                                       ]
+                                                                                                                                                    ++ List.drop (chunkIndex + 1) variant.chunks
+                                                                                                                                        }
+                                                                                                                                    , True
+                                                                                                                                    )
+
+                                                                                                                                ( "Backspace", True ) ->
+                                                                                                                                    ( RemoveChunk deck.id previewSelected_.variant chunkIndex
+                                                                                                                                    , True
+                                                                                                                                    )
+
+                                                                                                                                _ ->
+                                                                                                                                    ( Batch [], False )
+                                                                                                                        )
+                                                                                                                        (Json.Decode.field "key" Json.Decode.string)
+                                                                                                                        (Json.Decode.field "altKey" Json.Decode.bool)
+                                                                                                                        (Json.Decode.at [ "target", "selectionStart" ] Json.Decode.int)
+                                                                                                                        (Json.Decode.at [ "target", "selectionEnd" ] Json.Decode.int)
+                                                                                                                        Html.Events.targetValue
+                                                                                                                , Html.Attributes.value body
+                                                                                                                , Html.Attributes.rows (body |> String.lines |> List.length)
+                                                                                                                ]
+                                                                                                                []
+                                                                                                            , Html.div
+                                                                                                                [ Html.Attributes.style "visibility" "hidden"
+                                                                                                                , Html.Attributes.style "width" "100%"
+                                                                                                                , Html.Attributes.style "flex-shrink" "0"
+                                                                                                                , Html.Attributes.style "padding" "2px"
+                                                                                                                , Html.Attributes.style "white-space" "pre-wrap"
+                                                                                                                ]
+                                                                                                                [ Html.text body ]
+                                                                                                            ]
                                                                                                         ]
                                                                                                )
                                                                                         )
@@ -845,7 +877,7 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                                     , Html.Attributes.style "border-top" "none"
                                                                     , Html.Attributes.style "border-left" "none"
                                                                     , Html.Attributes.style "border-right" "none"
-                                                                    , Html.Events.onClick <| updateVariant { variant | chunks = variant.chunks ++ [ Deck.Body "" ] }
+                                                                    , Html.Events.onClick <| AddChunk deck.id previewSelected_.variant <| Deck.Body ""
                                                                     ]
                                                                     []
                                                                 ]
@@ -933,7 +965,7 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                                                             , Html.Attributes.style "display" "flex"
                                                                                             , Html.Attributes.style "flex-direction" "row"
                                                                                             , Html.Attributes.style "align-items" "center"
-                                                                                            , Html.Events.onClick <| updateDeck result
+                                                                                            , Html.Events.onClick <| UpdateDeck deck.id result
                                                                                             ]
                                                                                             [ Html.div
                                                                                                 [ Html.Attributes.style "flex" "1" ]
@@ -993,7 +1025,7 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                                                                         ShowErr e
 
                                                                                                     Ok chunks ->
-                                                                                                        updateVariant { variant | chunks = chunks }
+                                                                                                        UpdateVariant deck.id previewSelected_.variant { variant | chunks = chunks }
                                                                                             )
                                                                                         <|
                                                                                             Fetch.Bible.fetch params
@@ -1039,7 +1071,7 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                                                                         ShowErr e
 
                                                                                                     Ok chunks ->
-                                                                                                        updateVariant { variant | chunks = chunks }
+                                                                                                        UpdateVariant deck.id previewSelected_.variant { variant | chunks = chunks }
                                                                                             )
                                                                                         <|
                                                                                             Fetch.Psalm.fetch params
@@ -1072,7 +1104,7 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                                                                         ShowErr e
 
                                                                                                     Ok chunks ->
-                                                                                                        updateVariant { variant | chunks = chunks }
+                                                                                                        UpdateVariant deck.id previewSelected_.variant { variant | chunks = chunks }
                                                                                             )
                                                                                         <|
                                                                                             Fetch.Hymn.fetch params
@@ -1096,7 +1128,7 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                                         StylePanel.localStylePanel
                                                                             { default = output_.style
                                                                             , style = Maybe.withDefault Style.emptyLocal (Dict.get name variant.style)
-                                                                            , updateStyle = \newStyle -> updateVariant { variant | style = Dict.insert name newStyle variant.style }
+                                                                            , updateStyle = UpdateVariantStyle deck.id previewSelected_.variant name
                                                                             }
                                                                 ]
                                                     ]
@@ -1108,12 +1140,25 @@ view { tauri, programme, programmeTab, programmeList, previewSlide, previewSelec
                                                     , Html.Attributes.style "align-items" "center"
                                                     , Html.Attributes.style "padding" "2px"
                                                     , Html.Events.onClick <|
-                                                        LiveSend <|
-                                                            Just
-                                                                { title = Deck.getTitle deck
-                                                                , slide = previewSlide
-                                                                , slides = Slide.collate variant.slides
-                                                                }
+                                                        Batch
+                                                            [ LiveSend <|
+                                                                Just
+                                                                    { title = Deck.getTitle deck
+                                                                    , slide = previewSlide
+                                                                    , slides = Slide.collate variant.slides
+                                                                    }
+                                                            , case
+                                                                programme.decks
+                                                                    |> List.dropWhile ((/=) deck)
+                                                                    |> List.tail
+                                                                    |> Maybe.andThen List.head
+                                                              of
+                                                                Just nextDeck ->
+                                                                    PreviewSelect (Just { id = nextDeck.id, variant = nextDeck.defaultVariant })
+
+                                                                Nothing ->
+                                                                    Batch []
+                                                            ]
                                                     ]
                                                     []
                                                 ]
@@ -1337,8 +1382,104 @@ tabBar tabs =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     let
-        programmeSend_ programme =
-            ( { model | programme = programme }, programmeSend (Programme.encode programme) )
+        programmeSend_ : Programme -> List ( Deck.Chunk, Style ) -> ( Model, Cmd Msg )
+        programmeSend_ programme chunks =
+            ( { model | programme = programme }
+            , Cmd.batch
+                [ programmeSend (Programme.encode programme)
+                , splitChunks chunks
+                ]
+            )
+
+        splitChunks : List ( Deck.Chunk, Style ) -> Cmd Msg
+        splitChunks chunks =
+            Cmd.batch <|
+                List.map chunkSplitSend <|
+                    List.map
+                        (\( chunk, style ) ->
+                            Json.Encode.object [ ( "chunk", Deck.encodeChunk chunk ), ( "style", Style.encode style ) ]
+                        )
+                        chunks
+
+        updateDecks : List Deck -> Programme
+        updateDecks decks =
+            let
+                programme =
+                    model.programme
+            in
+            { programme | decks = decks }
+
+        updateDeck : Int -> (Deck -> Deck) -> Programme
+        updateDeck id f =
+            updateDecks <|
+                List.map
+                    (\deck ->
+                        if deck.id == id then
+                            f deck
+
+                        else
+                            deck
+                    )
+                <|
+                    model.programme.decks
+
+        updateVariant : Int -> Int -> (Deck.Variant -> Deck.Variant) -> Programme
+        updateVariant deckId variantId f =
+            updateDeck deckId <|
+                \deck -> { deck | variants = List.updateAt variantId f deck.variants }
+
+        variantChunksAndStyles : List Programme.Output -> Deck.Variant -> List ( Deck.Chunk, Style )
+        variantChunksAndStyles outputs variant =
+            List.concatMap (getStyles outputs variant.style) variant.chunks
+
+        getStyles : List Programme.Output -> Dict String Style.LocalStyle -> Deck.Chunk -> List ( Deck.Chunk, Style )
+        getStyles outputs localStyle chunk =
+            outputs
+                |> List.map
+                    (\output ->
+                        ( chunk
+                        , Style.addLocal output.style <| Maybe.withDefault Style.emptyLocal <| Dict.get output.name localStyle
+                        )
+                    )
+
+        updateSlides : ChunkToSlides -> Programme -> Programme
+        updateSlides chunkToSlides programme =
+            { programme
+                | decks =
+                    programme.decks
+                        |> List.map
+                            (\deck ->
+                                { deck
+                                    | variants =
+                                        deck.variants
+                                            |> List.map
+                                                (\variant ->
+                                                    { variant
+                                                        | slides =
+                                                            Dict.fromList <|
+                                                                List.map
+                                                                    (\output ->
+                                                                        ( output.name
+                                                                        , variant.chunks
+                                                                            |> List.filterMap
+                                                                                (\chunk2 ->
+                                                                                    Dict.Any.get
+                                                                                        ( chunk2
+                                                                                        , Style.addLocal output.style <|
+                                                                                            Maybe.withDefault Style.emptyLocal <|
+                                                                                                Dict.get output.name variant.style
+                                                                                        )
+                                                                                        chunkToSlides
+                                                                                )
+                                                                            |> List.concat
+                                                                        )
+                                                                    )
+                                                                    model.programme.outputs
+                                                    }
+                                                )
+                                }
+                            )
+            }
     in
     case msg of
         Batch msgs ->
@@ -1360,25 +1501,150 @@ update msg model =
         RunCmd cmd ->
             ( model, cmd )
 
-        ProgrammeRecv programme ->
-            ( { model | programme = programme }, Cmd.none )
+        ChunkSplitRecv ( chunk, style ) slides ->
+            let
+                chunkToSlides =
+                    Dict.Any.insert ( chunk, style ) slides model.chunkToSlides
+            in
+            ( { model
+                | chunkToSlides = chunkToSlides
+                , programme = updateSlides chunkToSlides model.programme
+              }
+            , Cmd.none
+            )
 
-        ProgrammeSend programme ->
-            programmeSend_ programme
+        ProgrammeRecv programme ->
+            ( { model | programme = updateSlides model.chunkToSlides programme }, Cmd.none )
+
+        RefreshSlides ->
+            ( model
+            , splitChunks <|
+                (model.programme.decks
+                    |> List.concatMap .variants
+                    |> List.concatMap (variantChunksAndStyles model.programme.outputs)
+                )
+            )
 
         UpdateOutputs outputs ->
             let
                 programme =
                     model.programme
             in
-            programmeSend_ { programme | outputs = outputs }
+            programmeSend_
+                { programme | outputs = outputs }
+                (model.programme.decks
+                    |> List.concatMap .variants
+                    |> List.concatMap (variantChunksAndStyles outputs)
+                )
 
         UpdateDecks decks ->
+            programmeSend_
+                (updateSlides model.chunkToSlides <| updateDecks decks)
+                (decks
+                    |> List.concatMap .variants
+                    |> List.concatMap (variantChunksAndStyles model.programme.outputs)
+                )
+
+        AddDeck deck ->
+            programmeSend_
+                (updateSlides model.chunkToSlides <| updateDecks <| model.programme.decks ++ [ deck ])
+                (deck.variants |> List.concatMap (variantChunksAndStyles model.programme.outputs))
+
+        RemoveDeck deckId ->
+            programmeSend_
+                (updateSlides model.chunkToSlides <| updateDecks <| List.filter (\{ id } -> id /= deckId) model.programme.decks)
+                []
+
+        UpdateDeck deckId deck ->
+            programmeSend_
+                (updateSlides model.chunkToSlides <| updateDeck deckId <| \_ -> deck)
+                (deck.variants |> List.concatMap (variantChunksAndStyles model.programme.outputs))
+
+        UpdateDeckTitle id title ->
+            programmeSend_
+                (updateSlides model.chunkToSlides <|
+                    updateDeck id <|
+                        \deck ->
+                            { deck
+                                | title =
+                                    if title == "" then
+                                        Nothing
+
+                                    else
+                                        Just title
+                            }
+                )
+                []
+
+        AddVariant deckId variant ->
+            programmeSend_
+                (updateSlides model.chunkToSlides <| updateDeck deckId <| \deck -> { deck | variants = deck.variants ++ [ variant ] })
+                (variantChunksAndStyles model.programme.outputs variant)
+
+        RemoveVariant deckId variantId ->
+            programmeSend_
+                (updateSlides model.chunkToSlides <| updateDeck deckId <| \deck -> { deck | variants = List.removeAt variantId deck.variants })
+                []
+
+        UpdateVariant deckId variantId variant ->
+            programmeSend_
+                (updateSlides model.chunkToSlides <| updateVariant deckId variantId <| \_ -> variant)
+                (variantChunksAndStyles model.programme.outputs variant)
+
+        UpdateVariantName deckId variantId name ->
+            programmeSend_
+                (updateSlides model.chunkToSlides <| updateVariant deckId variantId <| \variant -> { variant | name = name })
+                []
+
+        UpdateVariantStyle deckId variantId name style ->
             let
                 programme =
-                    model.programme
+                    updateSlides model.chunkToSlides <| updateVariant deckId variantId <| \variant -> { variant | style = Dict.insert name style variant.style }
             in
-            programmeSend_ { programme | decks = decks }
+            programmeSend_ programme
+                (programme.decks
+                    |> List.find (\{ id } -> id == deckId)
+                    |> Maybe.map .variants
+                    |> Maybe.andThen (List.getAt variantId)
+                    |> Maybe.map (variantChunksAndStyles programme.outputs)
+                    |> Maybe.withDefault []
+                )
+
+        AddChunk deckId variantId chunk ->
+            let
+                programme =
+                    updateSlides model.chunkToSlides <| updateVariant deckId variantId <| \variant -> { variant | chunks = variant.chunks ++ [ chunk ] }
+            in
+            programmeSend_ programme
+                (programme.decks
+                    |> List.find (\{ id } -> id == deckId)
+                    |> Maybe.map .variants
+                    |> Maybe.andThen (List.getAt variantId)
+                    |> Maybe.map (\{ style } -> getStyles programme.outputs style chunk)
+                    |> Maybe.withDefault []
+                )
+
+        RemoveChunk deckId variantId chunkId ->
+            programmeSend_
+                (updateSlides model.chunkToSlides <| updateVariant deckId variantId <| \variant -> { variant | chunks = List.removeAt chunkId variant.chunks })
+                []
+
+        UpdateChunk deckId variantId chunkId chunk ->
+            let
+                programme =
+                    updateSlides model.chunkToSlides <| updateVariant deckId variantId <| \variant -> { variant | chunks = List.setAt chunkId chunk variant.chunks }
+            in
+            programmeSend_ programme
+                (programme.decks
+                    |> List.find (\{ id } -> id == deckId)
+                    |> Maybe.map .variants
+                    |> Maybe.andThen (List.getAt variantId)
+                    |> Maybe.map (\{ style } -> getStyles programme.outputs style chunk)
+                    |> Maybe.withDefault []
+                )
+
+        UpdateDefaultVariant deckId variantId ->
+            programmeSend_ (updateDeck deckId <| \deck -> { deck | defaultVariant = variantId }) []
 
         OnResize ->
             let
@@ -1568,6 +1834,22 @@ subscriptions { programmeList, previewTab, previewPreview, liveOutput, livePrevi
                 case Json.Decode.decodeValue Programme.decode value of
                     Ok programme ->
                         ProgrammeRecv programme
+
+                    Err err ->
+                        ShowErr (Json.Decode.errorToString err)
+        , chunkSplitRecv <|
+            \value ->
+                case
+                    Json.Decode.decodeValue
+                        (Json.Decode.map3 (\chunk style slides -> ( chunk, style, slides ))
+                            (Json.Decode.field "chunk" Deck.decodeChunk)
+                            (Json.Decode.field "style" Style.decode)
+                            (Json.Decode.field "slides" <| Json.Decode.list Slide.decode)
+                        )
+                        value
+                of
+                    Ok ( chunk, style, slides ) ->
+                        ChunkSplitRecv ( chunk, style ) slides
 
                     Err err ->
                         ShowErr (Json.Decode.errorToString err)

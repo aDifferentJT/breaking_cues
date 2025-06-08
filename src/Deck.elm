@@ -1,4 +1,4 @@
-module Deck exposing (Chunk(..), Deck, Variant, decode, decodeWithoutIdOrSlides, encode, encodeWithoutId, getTitle, new)
+module Deck exposing (Chunk(..), ComparableChunk, Deck, TitleChunk, Variant, chunkToComparable, decode, decodeChunk, decodeWithoutIdOrSlides, encode, encodeChunk, encodeWithoutId, getTitle, new)
 
 import Dict exposing (Dict)
 import Json.Decode
@@ -11,6 +11,7 @@ import Style exposing (LocalStyle)
 type alias Deck =
     { title : Maybe String
     , variants : List Variant
+    , defaultVariant : Int
     , id : Int
     }
 
@@ -30,6 +31,20 @@ type Chunk
 
 type alias TitleChunk =
     { title : String, subtitle : String }
+
+
+type alias ComparableChunk =
+    ( Int, ( String, String ), String )
+
+
+chunkToComparable : Chunk -> ComparableChunk
+chunkToComparable chunk =
+    case chunk of
+        Title { title, subtitle } ->
+            ( 0, ( title, subtitle ), "" )
+
+        Body body ->
+            ( 1, ( "", "" ), body )
 
 
 getTitle : Deck -> String
@@ -70,11 +85,12 @@ new id =
     { id = id
     , title = Nothing
     , variants = [ { name = "", chunks = [ Body "New Deck" ], slides = Dict.empty, style = Dict.empty } ]
+    , defaultVariant = 0
     }
 
 
 encode : Deck -> Json.Encode.Value
-encode { id, title, variants } =
+encode { id, title, variants, defaultVariant } =
     Json.Encode.object
         [ ( "id", Json.Encode.int id )
         , ( "title"
@@ -86,13 +102,12 @@ encode { id, title, variants } =
                     Json.Encode.null
           )
         , ( "variants", Json.Encode.list encodeVariant variants )
-
-        -- Slides are not encoded as they shouldn't be sent serverward
+        , ( "defaultVariant", Json.Encode.int defaultVariant )
         ]
 
 
 encodeWithoutId : Deck -> Json.Encode.Value
-encodeWithoutId { title, variants } =
+encodeWithoutId { title, variants, defaultVariant } =
     Json.Encode.object
         [ ( "title"
           , case title of
@@ -103,34 +118,34 @@ encodeWithoutId { title, variants } =
                     Json.Encode.null
           )
         , ( "variants", Json.Encode.list encodeVariant variants )
-
-        -- Slides are not encoded as they shouldn't be sent serverward
+        , ( "defaultVariant", Json.Encode.int defaultVariant )
         ]
 
 
 decode : Json.Decode.Decoder Deck
 decode =
-    Json.Decode.map3 Deck
+    Json.Decode.map4 Deck
         (Json.Decode.field "title" <| Json.Decode.maybe Json.Decode.string)
         (Json.Decode.field "variants" <| Json.Decode.list decodeVariant)
+        (Json.Decode.field "defaultVariant" Json.Decode.int)
         (Json.Decode.field "id" Json.Decode.int)
 
 
 decodeWithoutIdOrSlides : Json.Decode.Decoder (Int -> Deck)
 decodeWithoutIdOrSlides =
-    Json.Decode.map2 Deck
+    Json.Decode.map3 Deck
         (Json.Decode.field "title" <| Json.Decode.maybe Json.Decode.string)
         (Json.Decode.field "variants" <| Json.Decode.list decodeVariantWithoutSlides)
+        (Json.Decode.field "defaultVariant" Json.Decode.int)
 
 
 encodeVariant : Variant -> Json.Encode.Value
-encodeVariant { name, chunks, style } =
+encodeVariant { name, chunks, slides, style } =
     Json.Encode.object
         [ ( "name", Json.Encode.string name )
         , ( "chunks", Json.Encode.list encodeChunk chunks )
+        , ( "slides", Json.Encode.dict (\x -> x) (Json.Encode.list Slide.encode) slides )
         , ( "style", Json.Encode.dict (\x -> x) Style.encodeLocal style )
-
-        -- Slides are not encoded as they shouldn't be sent serverward
         ]
 
 
